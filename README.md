@@ -18,9 +18,11 @@ Requires Go 1.25+ and `git` on `PATH`. No external Go dependencies.
 nc due  [--limit N]              what to solve today
 nc log  <id> <grade> [--mins N]  record a review (grade: study|again|hard|good|easy)
 nc list [--topic X] [--state Y]  browse the catalog (state: new|learning|review)
+nc help                          show usage for all commands
 ```
 
-All three accept `--no-sync` to skip git sync for that invocation.
+`due`, `log`, and `list` all accept `--no-sync` to skip git sync for that invocation. Run
+`nc help` for a full explanation of each command's flags and grades.
 
 ## First run
 

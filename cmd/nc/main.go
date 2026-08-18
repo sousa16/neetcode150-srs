@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"text/tabwriter"
@@ -244,8 +245,44 @@ func main() {
 		}
 		w.Flush()
 
+	case "help":
+		printHelp(os.Stdout)
+
 	default:
-		fmt.Fprintln(os.Stderr, "Command not recognized")
+		fmt.Fprintln(os.Stderr, "Command not recognized. Run 'nc help' for usage.")
 		os.Exit(1)
 	}
+}
+
+func printHelp(w io.Writer) {
+	fmt.Fprint(w, `nc - spaced repetition scheduler for the NeetCode 150
+
+Usage: nc <command> [flags]
+
+Commands:
+  due  [--limit N]              List problems due for review today, most overdue first.
+                                 --limit caps how many are shown (default from config).
+
+  log  <id> <grade> [--mins N]  Record a review for a problem and reschedule it.
+                                 <id> is a catalog id (see 'nc list'); <grade> is one of:
+                                   study  - watched/read the solution (new or learning cards only)
+                                   again  - got it wrong, needs to be seen again soon
+                                   hard   - solved, but it was a struggle
+                                   good   - solved comfortably
+                                   easy   - solved with no hesitation
+                                 --mins records time spent in minutes (default 25).
+
+  list [--topic X] [--state Y]  Browse the full catalog. Filters combine (both must match).
+                                 --topic filters by topic, e.g. "Arrays & Hashing".
+                                 --state filters by card state: new, learning, or review.
+
+  help                          Show this message.
+
+All commands except help also accept --no-sync, which skips pulling/pushing the
+review log's git repo for that invocation.
+
+Data lives in ~/.config/neetcode-srs/config.json (settings) and the git repo
+cloned to ~/.local/share/neetcode-srs/ (review history). See README.md and
+DESIGN.md for details.
+`)
 }
