@@ -1,0 +1,3 @@
+# Compiled binary — build with `go build -o nc ./cmd/nc` when you want one,
+# but it never belongs in the repo.
+/nc
