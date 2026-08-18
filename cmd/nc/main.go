@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"text/tabwriter"
 	"time"
 
 	"github.com/sousa16/neetcode150-srs/internal/catalog"
@@ -216,7 +217,9 @@ func main() {
 		}
 		cards := store.Fold(events)
 
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		problems := catalog.Load()
+		lastTopic := ""
 		for _, p := range problems {
 			if *topic != "" && p.Topic != *topic {
 				continue
@@ -230,8 +233,16 @@ func main() {
 				continue
 			}
 
-			fmt.Println(p.ID, p.Title, p.Topic)
+			// Flushing at each topic change resets tabwriter's column
+			// widths per section, so one long id/title elsewhere in the
+			// catalog doesn't blow out padding for the whole list.
+			if p.Topic != lastTopic {
+				w.Flush()
+				lastTopic = p.Topic
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\n", p.ID, p.Title, p.Topic)
 		}
+		w.Flush()
 
 	default:
 		fmt.Fprintln(os.Stderr, "Command not recognized")

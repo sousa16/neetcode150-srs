@@ -17,7 +17,7 @@ func defaults() Config {
 	return Config{
 		StartHour:  4,
 		DailyLimit: 5,
-		DataRepo:   "git@github.com:sousa16/neetcode150-srs-data.git",
+		DataRepo:   "git@github-personal:sousa16/neetcode150-srs-data.git",
 	}
 }
 
