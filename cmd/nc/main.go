@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -19,6 +20,16 @@ type dueItem struct {
 	problem     catalog.Problem
 	card        srs.Card
 	daysOverdue int
+}
+
+// shortRef is the UID prefix nc undo shows and matches against — short
+// enough to type, long enough that a collision across a handful of recent
+// reviews is not a practical concern.
+func shortRef(uid string) string {
+	if len(uid) > 8 {
+		return uid[:8]
+	}
+	return uid
 }
 
 func localDay(t time.Time, startHour int) time.Time {
@@ -194,6 +205,88 @@ func main() {
 		fmt.Printf("logged %s as %s — next due %s (interval %dd, ease %.2f)\n",
 			id, grade, next.Due.Format("2006-01-02"), next.Interval, next.Ease)
 
+	case "undo":
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "failed to load config:", err)
+			os.Exit(1)
+		}
+
+		// A ref is a positional arg, so it has to come before any flags —
+		// same convention as log's <id> <grade>. Its absence (or a leading
+		// "-") means "no ref given, just list recent entries".
+		rest := os.Args[2:]
+		var ref string
+		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			ref = rest[0]
+			rest = rest[1:]
+		}
+
+		fs := flag.NewFlagSet("undo", flag.ExitOnError)
+		noSync := fs.Bool("no-sync", false, "skip git sync")
+		fs.Parse(rest)
+
+		syncPull(*noSync)
+
+		events, err := store.Load()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "failed to load review history:", err)
+			os.Exit(1)
+		}
+		active := store.ActiveEvents(events)
+
+		if ref == "" {
+			if len(active) == 0 {
+				fmt.Println("no reviews logged yet")
+				return
+			}
+			start := len(active) - 5
+			if start < 0 {
+				start = 0
+			}
+			recent := active[start:]
+			for i := len(recent) - 1; i >= 0; i-- {
+				e := recent[i]
+				fmt.Printf("%s  %-6s %-40s %s\n", shortRef(e.UID), e.Grade, e.ID, e.At.Local().Format("2006-01-02 15:04"))
+			}
+			fmt.Println("run 'nc undo <ref>' to undo one of these")
+			return
+		}
+
+		var target *store.Event
+		for i := range active {
+			if strings.HasPrefix(active[i].UID, ref) {
+				if target != nil {
+					fmt.Fprintf(os.Stderr, "%q matches more than one recent review — use a longer ref\n", ref)
+					os.Exit(1)
+				}
+				target = &active[i]
+			}
+		}
+		if target == nil {
+			fmt.Fprintf(os.Stderr, "no recent review matches %q — run 'nc undo' to see recent entries\n", ref)
+			os.Exit(1)
+		}
+
+		now := time.Now()
+		voidEvent, err := store.Void(now, *target, cfg.Device)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "failed to record undo:", err)
+			os.Exit(1)
+		}
+
+		syncPush(*noSync, fmt.Sprintf("undo %s: %s", target.ID, target.Grade))
+
+		card, ok := store.Fold(append(events, voidEvent))[target.ID]
+		if !ok {
+			fmt.Printf("undone: %s %s (logged %s) — %s has no other reviews, back to new\n",
+				target.ID, target.Grade, target.At.Local().Format("2006-01-02 15:04"), target.ID)
+		} else {
+			fmt.Printf("undone: %s %s (logged %s) — %s now due %s (interval %dd, ease %.2f)\n",
+				target.ID, target.Grade, target.At.Local().Format("2006-01-02 15:04"),
+				target.ID, card.Due.Format("2006-01-02"), card.Interval, card.Ease)
+		}
+
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
 		topic := fs.String("topic", "", "filter by topic")
@@ -271,6 +364,12 @@ Commands:
                                    good   - solved comfortably
                                    easy   - solved with no hesitation
                                  --mins records time spent in minutes (default 25).
+
+  undo [ref]                    Undo a mistaken log entry. With no ref, shows the last 5
+                                 logged reviews with a short ref for each; run it again with
+                                 one of those refs to undo it. Safe to run any time after —
+                                 the log is append-only, so this adds an offsetting entry
+                                 rather than deleting anything.
 
   list [--topic X] [--state Y]  Browse the full catalog. Filters combine (both must match).
                                  --topic filters by topic, e.g. "Arrays & Hashing".

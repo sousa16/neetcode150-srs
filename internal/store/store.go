@@ -27,6 +27,10 @@ type Event struct {
 	Grade  srs.Grade `json:"grade"`
 	Mins   int       `json:"mins,omitempty"`
 	Device string    `json:"device,omitempty"`
+	// Voids holds the UID of an earlier event this one cancels. The log is
+	// append-only (see DESIGN.md), so undo can't delete or rewrite a line —
+	// it appends a tombstone instead, and Fold skips whatever UID it names.
+	Voids string `json:"voids,omitempty"`
 }
 
 func dataDir() (string, error) {
@@ -54,33 +58,54 @@ func Append(now time.Time, id string, grade srs.Grade, mins int, device string) 
 		Mins:   mins,
 		Device: device,
 	}
+	if err := appendEvent(e); err != nil {
+		return Event{}, err
+	}
+	return e, nil
+}
 
+// Void appends a tombstone event canceling target: Fold will replay the log
+// as if target's UID were never there. target itself is never touched — the
+// log stays append-only so sync (merge=union) can never conflict.
+func Void(now time.Time, target Event, device string) (Event, error) {
+	e := Event{
+		UID:    newUID(),
+		ID:     target.ID,
+		At:     now.UTC(),
+		Grade:  target.Grade,
+		Device: device,
+		Voids:  target.UID,
+	}
+	if err := appendEvent(e); err != nil {
+		return Event{}, err
+	}
+	return e, nil
+}
+
+func appendEvent(e Event) error {
 	path, err := Path()
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return Event{}, err
+		return err
 	}
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	defer f.Close()
 
 	line, err := json.Marshal(e)
 	if err != nil {
-		return Event{}, err
+		return err
 	}
 	line = append(line, '\n')
 
-	if _, err := f.Write(line); err != nil {
-		return Event{}, err
-	}
-
-	return e, nil
+	_, err = f.Write(line)
+	return err
 }
 
 func Load() ([]Event, error) {
@@ -118,22 +143,45 @@ func Load() ([]Event, error) {
 	return events, nil
 }
 
-func Fold(events []Event) map[string]srs.Card {
+// ActiveEvents returns the events that still count toward scheduling:
+// deduplicated by UID, sorted oldest-first, with tombstones and whatever
+// they voided removed. It's the single source of truth Fold and the undo
+// command both build on.
+func ActiveEvents(events []Event) []Event {
 	sorted := make([]Event, len(events))
 	copy(sorted, events)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].At.Before(sorted[j].At)
 	})
 
-	cards := make(map[string]srs.Card)
-	seen := make(map[string]bool)
+	voided := make(map[string]bool)
+	for _, e := range sorted {
+		if e.Voids != "" {
+			voided[e.Voids] = true
+		}
+	}
 
+	var active []Event
+	seen := make(map[string]bool)
 	for _, e := range sorted {
 		if seen[e.UID] {
 			continue
 		}
 		seen[e.UID] = true
 
+		if e.Voids != "" || voided[e.UID] {
+			continue
+		}
+		active = append(active, e)
+	}
+
+	return active
+}
+
+func Fold(events []Event) map[string]srs.Card {
+	cards := make(map[string]srs.Card)
+
+	for _, e := range ActiveEvents(events) {
 		card, ok := cards[e.ID]
 		if !ok {
 			card = srs.NewCard(e.ID)

@@ -312,3 +312,94 @@ func TestFoldEmpty(t *testing.T) {
 		t.Errorf("Fold(nil) = %v, want empty map", cards)
 	}
 }
+
+func TestFoldSkipsVoidedEvent(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.AddDate(0, 0, 1)
+
+	events := []Event{
+		{UID: "a", ID: "two-sum", At: t0, Grade: srs.GradeGood},
+		{UID: "b", ID: "two-sum", At: t1, Grade: srs.GradeHard, Voids: "a"},
+	}
+
+	cards := Fold(events)
+	if _, ok := cards["two-sum"]; ok {
+		t.Errorf("Fold() = %v, want no card once its only event is voided", cards)
+	}
+}
+
+func TestFoldReplaysAroundVoidedMiddleEvent(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.AddDate(0, 0, 1)
+	t2 := t0.AddDate(0, 0, 2)
+
+	events := []Event{
+		{UID: "a", ID: "two-sum", At: t0, Grade: srs.GradeGood},
+		{UID: "b", ID: "two-sum", At: t1, Grade: srs.GradeAgain}, // logged by mistake
+		{UID: "c", ID: "two-sum", At: t2, Grade: srs.GradeEasy, Voids: "b"},
+	}
+
+	cards := Fold(events)
+	card, ok := cards["two-sum"]
+	if !ok {
+		t.Fatal("Fold() missing card for two-sum")
+	}
+	// With b voided, only a (good, interval 3) feeds scheduling; ease
+	// should never have taken the "again" lapse penalty.
+	if card.Lapses != 0 {
+		t.Errorf("Lapses = %d, want 0 (the again grade was voided)", card.Lapses)
+	}
+}
+
+func TestActiveEventsExcludesTombstonesAndVoidedTargets(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.AddDate(0, 0, 1)
+	t2 := t0.AddDate(0, 0, 2)
+
+	events := []Event{
+		{UID: "a", ID: "two-sum", At: t0, Grade: srs.GradeGood},
+		{UID: "b", ID: "valid-anagram", At: t1, Grade: srs.GradeHard},
+		{UID: "c", ID: "valid-anagram", At: t2, Grade: srs.GradeHard, Voids: "b"},
+	}
+
+	active := ActiveEvents(events)
+	if len(active) != 1 || active[0].UID != "a" {
+		t.Errorf("ActiveEvents() = %+v, want only event a", active)
+	}
+}
+
+func TestVoidAppendsTombstone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	target, err := Append(time.Now(), "two-sum", srs.GradeGood, 18, "work")
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	voidEvent, err := Void(time.Now(), target, "work")
+	if err != nil {
+		t.Fatalf("Void() error = %v", err)
+	}
+	if voidEvent.Voids != target.UID {
+		t.Errorf("voidEvent.Voids = %q, want %q", voidEvent.Voids, target.UID)
+	}
+	if voidEvent.UID == target.UID {
+		t.Error("Void() reused the target's UID instead of minting a new one")
+	}
+
+	events, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("len(events) = %d, want 2 (original event untouched, tombstone appended)", len(events))
+	}
+	if events[0] != target {
+		t.Errorf("events[0] = %+v, want the untouched original %+v", events[0], target)
+	}
+
+	if _, ok := Fold(events)["two-sum"]; ok {
+		t.Error("Fold() still has a card for two-sum after its only event was voided")
+	}
+}

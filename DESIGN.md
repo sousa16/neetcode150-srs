@@ -41,6 +41,16 @@ One event per line:
 - `at` — RFC3339, always **UTC**
 - `grade` — `study | again | hard | good | easy`
 - `mins` — optional, not used by the scheduler; for later analysis
+- `voids` — optional; if set, holds the `uid` of an earlier event this one cancels
+
+### Undo
+
+The log is append-only, so undoing a mistaken `nc log` can't delete or rewrite its line —
+that's exactly the kind of mutation `merge=union` can't reconcile if another device already
+pulled it. Instead `nc undo` appends a **tombstone**: a new event whose `voids` names the
+mistaken entry's `uid`. `Fold` replays the log as if that `uid` were never there — the
+tombstone itself is also skipped, so it never feeds the SM-2 math either. History is still
+complete; a tombstoned event simply stops counting.
 
 `.gitattributes` in the data repo:
 
@@ -98,6 +108,7 @@ it just loses the race on a crowded day.
 ```
 nc due  [--limit N]              what to solve today
 nc log  <id> <grade> [--mins N]  record a review
+nc undo [ref]                    undo a mistaken review (see Undo above)
 nc list [--topic X] [--state Y]  browse the catalog with current state
 ```
 

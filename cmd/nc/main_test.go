@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/sousa16/neetcode150-srs/internal/config"
+	"github.com/sousa16/neetcode150-srs/internal/store"
 )
 
 var binPath string
@@ -254,5 +255,96 @@ func TestListRejectsInvalidState(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "invalid state") {
 		t.Errorf("stderr = %q, want mention of invalid state", stderr)
+	}
+}
+
+func TestUndoWithNoLogsSaysSo(t *testing.T) {
+	stdout, stderr, code := run(t, "undo", "--no-sync")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "no reviews logged yet") {
+		t.Errorf("stdout = %q, want mention of no reviews logged yet", stdout)
+	}
+}
+
+func TestUndoListsRecentEntries(t *testing.T) {
+	home := t.TempDir()
+	_, stderr, code := runIn(t, home, "log", "two-sum", "good", "--no-sync")
+	if code != 0 {
+		t.Fatalf("setup log failed: exit %d, stderr %s", code, stderr)
+	}
+
+	stdout, stderr, code := runIn(t, home, "undo", "--no-sync")
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "two-sum") {
+		t.Errorf("stdout = %q, want it to list the logged two-sum review", stdout)
+	}
+	if !strings.Contains(stdout, "run 'nc undo <ref>'") {
+		t.Errorf("stdout = %q, want instructions for undoing by ref", stdout)
+	}
+}
+
+func TestUndoByRefReversesTheLog(t *testing.T) {
+	home := t.TempDir()
+	_, stderr, code := runIn(t, home, "log", "two-sum", "good", "--no-sync")
+	if code != 0 {
+		t.Fatalf("setup log failed: exit %d, stderr %s", code, stderr)
+	}
+
+	listOut, _, code := runIn(t, home, "undo", "--no-sync")
+	if code != 0 {
+		t.Fatalf("undo list failed: exit %d", code)
+	}
+	ref := strings.Fields(listOut)[0]
+
+	stdout, stderr, code := runIn(t, home, "undo", ref, "--no-sync")
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "undone: two-sum good") {
+		t.Errorf("stdout = %q, want confirmation the two-sum review was undone", stdout)
+	}
+
+	// The card should be back to new, and reviews.jsonl should still have
+	// both the original event and the tombstone — nothing deleted.
+	stdoutList, _, code := runIn(t, home, "list", "--state", "new", "--no-sync")
+	if code != 0 {
+		t.Fatalf("list --state new failed: exit %d", code)
+	}
+	if !strings.Contains(stdoutList, "two-sum") {
+		t.Errorf("list --state new = %q, want two-sum back to state new after undo", stdoutList)
+	}
+
+	t.Setenv("HOME", home)
+	path, err := store.Path()
+	if err != nil {
+		t.Fatalf("store.Path() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading reviews.jsonl: %v", err)
+	}
+	if lines := strings.Count(strings.TrimSpace(string(data)), "\n") + 1; lines != 2 {
+		t.Errorf("reviews.jsonl has %d lines, want 2 (original event plus tombstone, nothing deleted)", lines)
+	}
+}
+
+func TestUndoRejectsUnknownRef(t *testing.T) {
+	home := t.TempDir()
+	_, stderr, code := runIn(t, home, "log", "two-sum", "good", "--no-sync")
+	if code != 0 {
+		t.Fatalf("setup log failed: exit %d, stderr %s", code, stderr)
+	}
+
+	_, stderr, code = runIn(t, home, "undo", "not-a-real-ref", "--no-sync")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "no recent review matches") {
+		t.Errorf("stderr = %q, want mention of no matching review", stderr)
 	}
 }

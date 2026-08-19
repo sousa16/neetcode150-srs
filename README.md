@@ -17,12 +17,18 @@ Requires Go 1.25+ and `git` on `PATH`. No external Go dependencies.
 ```
 nc due  [--limit N]              what to solve today
 nc log  <id> <grade> [--mins N]  record a review (grade: study|again|hard|good|easy)
+nc undo [ref]                    undo a mistaken log entry
 nc list [--topic X] [--state Y]  browse the catalog (state: new|learning|review)
 nc help                          show usage for all commands
 ```
 
-`due`, `log`, and `list` all accept `--no-sync` to skip git sync for that invocation. Run
-`nc help` for a full explanation of each command's flags and grades.
+`due`, `log`, `undo`, and `list` all accept `--no-sync` to skip git sync for that invocation.
+Run `nc help` for a full explanation of each command's flags and grades.
+
+Logged the wrong grade or the wrong problem? Run `nc undo` with no arguments to see the last 5
+reviews with a short ref for each, then `nc undo <ref>` to undo one. This never edits or
+deletes a line in `reviews.jsonl` — it appends an offsetting entry, so sync between machines
+stays conflict-free.
 
 ## First run
 
